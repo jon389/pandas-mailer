@@ -1,0 +1,20 @@
+name: pandas-mailer
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - pip
+  - regex
+  - pandas
+  - jinja2  # DataFrame.style requires jinja2
+  - requests
+  - multitasking  # yfinance
+  - lxml
+  - python-dateutil
+  - pytz
+  - xlrd
+  - dateparser
+  - pywin32
+  - xlwings
+  - pip:
+    - yfinance
