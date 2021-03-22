@@ -39,17 +39,20 @@ import yfinance as yf  # https://github.com/ranaroussi/yfinance
 def get_data() -> pd.DataFrame:
     closes = []
     for t in yf.Tickers(tickers='^GSPC ES=F CL=F GBPUSD=X USDCAD=X BTC-USD').tickers:
-        h = t.history(period='30m', interval='1m', prepost=True)
+        try:
+            h = t.history(period='30m', interval='1m', prepost=True)
 
-        closes.append(dict(
-            **{x: t.info.get(x) for x in 'symbol shortName'.split()},
-            price=round(h.Close.iloc[-1], t.info['priceHint']) if 'priceHint' in t.info else h.Close.iloc[-1],
-            ccy=t.info.get('currency'),
-            at=h.index[-1],
-            tzone=h.index[-1].tzinfo.zone if h.index[-1].tzinfo is not None else '',
+            closes.append(dict(
+                **{x: t.info.get(x) for x in 'symbol shortName'.split()},
+                price=round(h.Close.iloc[-1], t.info['priceHint']) if 'priceHint' in t.info else h.Close.iloc[-1],
+                ccy=t.info.get('currency'),
+                at=h.index[-1],
+                tzone=h.index[-1].tzinfo.zone if h.index[-1].tzinfo is not None else '',
 
-            # _gmtOffset=int(t.info.get('gmtOffSetMilliseconds', 0))/1000/60/60,
-        ))
+                # _gmtOffset=int(t.info.get('gmtOffSetMilliseconds', 0))/1000/60/60,
+            ))
+        except:
+            pass
 
     return (pd.DataFrame(closes)
               # .assign(at=lambda d: pd.to_datetime(d['at'], utc=True))
