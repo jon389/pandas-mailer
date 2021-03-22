@@ -44,3 +44,5 @@ server.sendmail(msg['From'], emaillist , msg.as_string())
 https://gist.github.com/jon389/315b16e143fe550af10feff19aa9696f
 
 [yfinance](https://github.com/ranaroussi/yfinance)
+
+![image](https://user-images.githubusercontent.com/24356268/110604296-d0de6e80-817f-11eb-9be4-e8c56d682756.png)
