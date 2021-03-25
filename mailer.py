@@ -1,6 +1,10 @@
 from smtplib import SMTP
 from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
+from email import encoders
+from io import BytesIO
+
 import pandas as pd
 
 
@@ -106,10 +110,10 @@ def style_html_table(df: pd.DataFrame) -> str:
 
 
 def email_table(df: pd.DataFrame, smtp_svr: str, smtp_user: str, smtp_pass: str, from_email: str, to_email: str):
-    message = MIMEMultipart()
-    message['Subject'] = f'Pandas-Mailer {pd.to_datetime("now"):%Y-%m-%d %H:%M:%S}'
-    message['From'] = from_email
-    message['To'] = to_email
+    msg = MIMEMultipart()
+    msg['Subject'] = f'Pandas-Mailer {pd.to_datetime("now"):%Y-%m-%d %H:%M:%S}'
+    msg['From'] = from_email
+    msg['To'] = to_email
 
     df_html = style_html_table(df)
 
@@ -124,11 +128,21 @@ def email_table(df: pd.DataFrame, smtp_svr: str, smtp_user: str, smtp_pass: str,
             </html>
             ''')
 
-    message.attach(MIMEText(msg_body, 'html'))
-    msg_body = message.as_string()
+    msg.attach(MIMEText(msg_body, 'html'))
+
+    # attach dataframe as an xlsx file
+    _xlsx = BytesIO()
+    df.to_excel(_xlsx, index=False)
+    _xlsx.seek(0, 0)
+    attach1 = MIMEBase('application', 'octet-stream')
+    attach1.set_payload(_xlsx.read())
+    encoders.encode_base64(attach1)
+    attach1.add_header('Content-Disposition', 'attachment',
+                       filename=f'Pandas-Mailer {pd.to_datetime("now"):%Y-%m-%d}.xlsx')
+    msg.attach(attach1)
 
     server = SMTP(smtp_svr, 587)
     server.starttls()
     server.login(smtp_user, smtp_pass)
-    server.sendmail(message['From'], message['To'], msg_body)
+    server.sendmail(msg['From'], msg['To'], msg.as_string())
     server.quit()
