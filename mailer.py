@@ -132,6 +132,7 @@ def email_table(df: pd.DataFrame, smtp_svr: str, smtp_user: str, smtp_pass: str,
 
     # attach dataframe as an xlsx file
     _xlsx = BytesIO()
+    df['at'] = df['at'].map(lambda x: x.replace(tzinfo=None))  # openpyxl Excel does not support timezones
     df.to_excel(_xlsx, index=False)
     _xlsx.seek(0, 0)
     attach1 = MIMEBase('application', 'octet-stream')
