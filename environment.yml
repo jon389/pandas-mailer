@@ -6,7 +6,8 @@ dependencies:
   - pip
   - regex
   - pandas
-  - jinja2  # DataFrame.style requires jinja2
+  - jinja2    # DataFrame.style requires jinja2
+  - openpyxl  # DataFrame.to_excel requires openpyxl
   - requests
   - multitasking  # yfinance
   - lxml
