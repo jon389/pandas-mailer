@@ -1,5 +1,13 @@
+from zoneinfo import ZoneInfo
+from datetime import datetime, time, timedelta
+from tzlocal import get_localzone
+
 import pandas as pd, numpy as np
-# import xlwings as xw
+from pandas.tseries.holiday import USFederalHolidayCalendar
+bday_us = pd.offsets.CustomBusinessDay(calendar=USFederalHolidayCalendar())
+
+import xlwings as xw
+from log_conf import logger as log
 import yfinance as yf  # https://github.com/ranaroussi/yfinance
 
 # data = yf.download(tickers='^GSPC ES=F CL=F GBPUSD=X USDCAD=X BTC-USD', period='2d', interval='5m', prepost=True)
@@ -13,7 +21,6 @@ import yfinance as yf  # https://github.com/ranaroussi/yfinance
 # '^GSPC'   : 'S&P 500 Index'
 # Nasdaq
 # FTSE 100 Index
-# VMID.L
 
 # Crypto
 # 'BTC-USD' : 'Bitcoin'
@@ -36,27 +43,107 @@ import yfinance as yf  # https://github.com/ranaroussi/yfinance
 # pd.options.display.width = 150
 # pd.set_option('display.max_columns', 10)
 
+
+def get_iday_times(now) -> dict:
+
+    # for datetime.combine, if date=datetime, its time components and tzinfo attributes ignored
+    iday_times = {
+        'nyc_close': datetime.combine(now - timedelta(days=1), time(17, 0, 0, tzinfo=ZoneInfo('America/New_York'))),
+        # 'asia_open': datetime.combine(now, time(8, 0, 0, tzinfo=ZoneInfo('Asia/Tokyo'))),
+        'lndn_open': datetime.combine(now, time(8, 0, 0, tzinfo=ZoneInfo('Europe/London'))),
+        'ldn_close': datetime.combine(now, time(16, 0, 0, tzinfo=ZoneInfo('Europe/London'))),
+    }
+
+    for ts in iday_times:
+        if (iday_times[ts] - now).total_seconds() > -55 * 60:  # is within 55min or after, so shift day earlier
+            iday_times[ts] -= timedelta(days=1)
+        if iday_times[ts].weekday() >= 5:  # is Sat/Sun, so shift to prior Friday
+            iday_times[ts] -= timedelta(days=iday_times[ts].weekday() - 4)  # if Sat, weekday=5, Sun=6
+
+    # sort by datetime
+    # noinspection PyTypeChecker
+    iday_times = dict(sorted(iday_times.items(), key=lambda item: item[1]))
+
+    # ensure all times before now
+    assert all((iday_times[dt] - now).total_seconds() < 0 for dt in iday_times)
+
+    return iday_times
+
 def get_data() -> pd.DataFrame:
-    closes = []
-    for t in yf.Tickers(tickers='^GSPC ES=F CL=F GBPUSD=X USDCAD=X BTC-USD').tickers:
+    yf_tickers = ('^GSPC ES=F ^TNX CL=F GC=F '
+                  'GBPUSD=X GBPEUR=X USDCAD=X '
+                  'BTC-USD ETH-USD '
+                  'VUSA.L VFEM.L VUTY.L'
+                  )
+    yf_mkt_data = []
+
+    now = datetime.now(tz=get_localzone())
+    mnth_ago = (now - pd.offsets.DateOffset(months=1)).date() - pd.offsets.BDay(1)   # .date() chops off timepart
+
+    iday_times = get_iday_times(now)
+
+    log.info(f'loading yf tickers {yf_tickers}')
+    for t in yf.Tickers(tickers=yf_tickers).tickers.values():
         try:
-            h = t.history(period='30m', interval='1m', prepost=True)
+            log.info(f'loading history for {t.info["symbol"]}')
+            iday = t.history(period='5d', interval='1h', prepost=True)
+            mnth = t.history(start=mnth_ago, interval='1d')
 
-            closes.append(dict(
-                **{x: t.info.get(x) for x in 'symbol shortName'.split()},
-                price=round(h.Close.iloc[-1], t.info['priceHint']) if 'priceHint' in t.info else h.Close.iloc[-1],
+            pHint = t.info['priceHint'] if 'priceHint' in t.info else 2
+            def pHint_round(num):
+                return round(num, pHint) if pd.notna(num) else num
+
+            iday.index = iday.index.tz_convert(now.tzinfo)
+            iday['IntradayPeriod'] = pd.cut(
+                iday.index,
+                bins=[iday_times[dt].astimezone(now.tzinfo) for dt in iday_times] + [now+timedelta(days=1)],
+                labels=[f'{iday_times[dt].astimezone(now.tzinfo):%I%p %d%b%y}'.lstrip('0') for dt in iday_times],
+                right=False,
+            )
+            iday_periods = iday.groupby('IntradayPeriod').agg(Open=('Open', 'first'),
+                                                              High_since=('High', 'max'),
+                                                              Low_since=('Low', 'min'))
+
+            iday_gaps = iday_periods.stack().reset_index().assign(
+                new_head=lambda d: d.IntradayPeriod.astype(str).where(d.level_1 == 'Open',
+                                                                      d.level_1.str.cat(
+                                                                          d.IntradayPeriod.astype(str).str.split(
+                                                                              expand=True)[0]))
+                ).set_index('new_head')[0]
+
+
+
+            yf_mkt_data.append(dict(
+                #**{x: t.info.get(x) for x in 'symbol shortName'.split()},
+                symbol=t.info.get('symbol'),
+                shortName=(t.info.get('shortName')
+                           if not t.info.get('shortName', '').startswith('VANGUARD FUNDS PLC')
+                           else (t.info.get('longName', '')[:t.info.get('longName', '').index(' UCITS')]
+                                    ).replace('Vanguard Funds Public Limited Company - ', '')
+                           ),
+                price=pHint_round(iday.Close.iloc[-1]),
                 ccy=t.info.get('currency'),
-                at=h.index[-1],
-                tzone=h.index[-1].tzinfo.zone if h.index[-1].tzinfo is not None else '',
-
+                **{f'{now.tzname()} - {now.tzinfo.zone}': f'{iday.index[-1].astimezone(now.tzinfo):%a %d%b%y %H:%M:%S}',
+                   },
+                #tzone=iday.index[-1].tzinfo.zone if iday.index[-1].tzinfo is not None else '',
                 # _gmtOffset=int(t.info.get('gmtOffSetMilliseconds', 0))/1000/60/60,
+                #**iday_gaps.map(pHint_round).to_dict(),
+                **{
+                    'prevClose': pHint_round(t.info.get('previousClose')),
+                    #'mth_ago': mnth_ago,  # mnth.index[0],
+                    f'{mnth_ago:%d%b%y}': pHint_round(mnth.loc[mnth_ago].Close),  # mnth.iloc[0].Close,
+                    'high_since': pHint_round(mnth.High.max()),
+                    'high_when': f'{mnth.High.idxmax():%d%b%y}',
+                    'low_since': pHint_round(mnth.High.min()),
+                    'low_when': f'{mnth.High.idxmin():%d%b%y}',
+                    }
             ))
         except:
-            pass
+            log.error(f'error with {t.info["symbol"]}')
 
-    return (pd.DataFrame(closes)
+    return (pd.DataFrame(yf_mkt_data)
               # .assign(at=lambda d: pd.to_datetime(d['at'], utc=True))
-            )
+            )[yf_mkt_data[0].keys()]
 
 
 if __name__ == '__main__':

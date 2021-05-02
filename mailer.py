@@ -6,8 +6,9 @@ from email import encoders
 from io import BytesIO
 
 import pandas as pd
+from tzlocal import get_localzone
 
-
+# TODO https://stackoverflow.com/questions/32808383/formatting-numbers-so-they-align-on-decimal-point
 def style_html_table(df: pd.DataFrame) -> str:
     datetime_cols = (df.select_dtypes('datetime').columns.to_list() +
                      [col for col in df.select_dtypes('object').columns
@@ -111,7 +112,7 @@ def style_html_table(df: pd.DataFrame) -> str:
 
 def email_table(df: pd.DataFrame, smtp_svr: str, smtp_user: str, smtp_pass: str, from_email: str, to_email: str):
     msg = MIMEMultipart()
-    msg['Subject'] = f'Pandas-Mailer {pd.to_datetime("now"):%Y-%m-%d %H:%M:%S}'
+    msg['Subject'] = f'Pandas-Mailer {pd.Timestamp.now(get_localzone()):%d%b %H:%M:%S %Z}'
     msg['From'] = from_email
     msg['To'] = to_email
 
@@ -132,14 +133,14 @@ def email_table(df: pd.DataFrame, smtp_svr: str, smtp_user: str, smtp_pass: str,
 
     # attach dataframe as an xlsx file
     _xlsx = BytesIO()
-    df['at'] = df['at'].map(lambda x: x.replace(tzinfo=None))  # openpyxl Excel does not support timezones
+    #df['at'] = df['at'].map(lambda x: x.replace(tzinfo=None))  # openpyxl Excel does not support timezones
     df.to_excel(_xlsx, index=False)
     _xlsx.seek(0, 0)
     attach1 = MIMEBase('application', 'octet-stream')
     attach1.set_payload(_xlsx.read())
     encoders.encode_base64(attach1)
     attach1.add_header('Content-Disposition', 'attachment',
-                       filename=f'Pandas-Mailer {pd.to_datetime("now"):%Y-%m-%d}.xlsx')
+                       filename=f'Pandas-Mailer {pd.Timestamp.now(get_localzone()):%Y-%m-%d}.xlsx')
     msg.attach(attach1)
 
     server = SMTP(smtp_svr, 587)
