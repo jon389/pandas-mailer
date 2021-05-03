@@ -21,7 +21,7 @@ def style_html_table(df: pd.DataFrame) -> str:
                # set text to display
                .hide_index()
                .format({col: '{:%a %d %b %y %H:%M:%S %Z}' for col in datetime_cols})
-               .format({col: lambda x: f'{x:,.8f}'.rstrip('0').rstrip('.')
+               .format({col: lambda x: f'{x:,.8f}'.rstrip('0').rstrip('.') if pd.notna(x) else ''
                         for col in df.select_dtypes('float').columns})
 
                # CSS classes are attached to the generated HTML

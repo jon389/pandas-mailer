@@ -79,7 +79,6 @@ def get_data() -> pd.DataFrame:
 
     now = datetime.now(tz=get_localzone())
     mnth_ago = (now - pd.offsets.DateOffset(months=1)).date() - pd.offsets.BDay(1)   # .date() chops off timepart
-
     iday_times = get_iday_times(now)
 
     log.info(f'loading yf tickers {yf_tickers}')
@@ -88,15 +87,24 @@ def get_data() -> pd.DataFrame:
             log.info(f'loading history for {t.info["symbol"]}')
             iday = t.history(period='5d', interval='1h', prepost=True)
             mnth = t.history(start=mnth_ago, interval='1d')
+            yf_mkt_data.append((t, iday, mnth,))
+        except Exception as e:
+            log.exception(f'error loading {t.info["symbol"]}')
 
-            pHint = t.info['priceHint'] if 'priceHint' in t.info else 2
+    # find common month ago date
+    mnth_ago = min(set.intersection(*[set(mnth.index) for t, iday, mnth in  yf_mkt_data]))
+
+    # parse loaded data
+    parsed_yf_data = []
+    for t, iday, mnth in yf_mkt_data:
+        try:
             def pHint_round(num):
-                return round(num, pHint) if pd.notna(num) else num
+                return round(num, t.info.get('priceHint', 2)) if pd.notna(num) else num
 
             iday.index = iday.index.tz_convert(now.tzinfo)
             iday['IntradayPeriod'] = pd.cut(
                 iday.index,
-                bins=[iday_times[dt].astimezone(now.tzinfo) for dt in iday_times] + [now+timedelta(days=1)],
+                bins=[iday_times[dt].astimezone(now.tzinfo) for dt in iday_times] + [now + timedelta(days=1)],
                 labels=[f'{iday_times[dt].astimezone(now.tzinfo):%I%p %d%b%y}'.lstrip('0') for dt in iday_times],
                 right=False,
             )
@@ -109,11 +117,9 @@ def get_data() -> pd.DataFrame:
                                                                       d.level_1.str.cat(
                                                                           d.IntradayPeriod.astype(str).str.split(
                                                                               expand=True)[0]))
-                ).set_index('new_head')[0]
+            ).set_index('new_head')[0]
 
-
-
-            yf_mkt_data.append(dict(
+            parsed_yf_data.append(dict(
                 #**{x: t.info.get(x) for x in 'symbol shortName'.split()},
                 symbol=t.info.get('symbol'),
                 shortName=(t.info.get('shortName')
@@ -122,7 +128,7 @@ def get_data() -> pd.DataFrame:
                                     ).replace('Vanguard Funds Public Limited Company - ', '')
                            ),
                 price=pHint_round(iday.Close.iloc[-1]),
-                ccy=t.info.get('currency'),
+                ccy=t.info.get('currency', ''),
                 **{f'{now.tzname()} - {now.tzinfo.zone}': f'{iday.index[-1].astimezone(now.tzinfo):%a %d%b%y %H:%M:%S}',
                    },
                 #tzone=iday.index[-1].tzinfo.zone if iday.index[-1].tzinfo is not None else '',
@@ -131,19 +137,21 @@ def get_data() -> pd.DataFrame:
                 **{
                     'prevClose': pHint_round(t.info.get('previousClose')),
                     #'mth_ago': mnth_ago,  # mnth.index[0],
-                    f'{mnth_ago:%d%b%y}': pHint_round(mnth.loc[mnth_ago].Close),  # mnth.iloc[0].Close,
-                    'high_since': pHint_round(mnth.High.max()),
-                    'high_when': f'{mnth.High.idxmax():%d%b%y}',
-                    'low_since': pHint_round(mnth.High.min()),
-                    'low_when': f'{mnth.High.idxmin():%d%b%y}',
+                    '-1mth ' f'{mnth_ago:%d%b%y}'.lstrip('0'):
+                                    pHint_round(mnth.loc[mnth_ago].Close),  # mnth.iloc[0].Close,
+
+                    'high_since'    : pHint_round(mnth.High.max()),
+                    'high_when'     : f'{mnth.High.idxmax():%d%b%y}',
+                    'low_since'     : pHint_round(mnth.High.min()),
+                    'low_when'      : f'{mnth.High.idxmin():%d%b%y}',
                     }
             ))
-        except:
-            log.error(f'error with {t.info["symbol"]}')
+        except Exception as e:
+            log.exception(f'error parsing data for {t.info["symbol"]}')
 
-    return (pd.DataFrame(yf_mkt_data)
+    return (pd.DataFrame(parsed_yf_data)
               # .assign(at=lambda d: pd.to_datetime(d['at'], utc=True))
-            )[yf_mkt_data[0].keys()]
+            )[parsed_yf_data[0].keys()]
 
 
 if __name__ == '__main__':
@@ -155,7 +163,11 @@ if __name__ == '__main__':
     argp = ArgumentParser()
     for a in run_func.__code__.co_varnames[:run_func.__code__.co_argcount]:
         argp.add_argument(a)
-    run_func(**vars(argp.parse_args()))
+
+    try:
+        run_func(**vars(argp.parse_args()))
+    except Exception as e:
+        log.exception()
 
 # Program/script: %ComSpec%
 # Add arguments:  /c start "" /min %ComSpec% /c "%LOCALAPPDATA%\anaconda3\condabin\conda.bat activate .\envs & python mkt_update.py smtp_svr... "
